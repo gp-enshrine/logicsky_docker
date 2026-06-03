@@ -32,3 +32,13 @@ node_modules
 # VitePress
 **/.vitepress/dist
 **/.vitepress/cache
+
+# macOS junk
+.DS_Store
+**/.DS_Store
+
+# Local-only backup variants of compose
+docker-compose.logicsky.yml.bak
+docker-compose.logicsky.yml.broken
+docker-compose.*.yml.bak
+docker-compose.*.yml.broken

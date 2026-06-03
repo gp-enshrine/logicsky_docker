@@ -1,0 +1,158 @@
+services:
+  backend:
+    image: logicsky-erp:latest
+    restart: unless-stopped
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - ../apps/logicsky_theme:/home/frappe/frappe-bench/apps/logicsky_theme
+    depends_on:
+      - configurator
+
+  configurator:
+    image: logicsky-erp:latest
+    restart: "no"
+    entrypoint: ["bash", "-c"]
+    command:
+      - >
+        ls -1 apps > sites/apps.txt;
+        bench set-config -g db_host db;
+        bench set-config -gp db_port 3306;
+        bench set-config -g redis_cache "redis://redis-cache:6379";
+        bench set-config -g redis_queue "redis://redis-queue:6379";
+        bench set-config -g redis_socketio "redis://redis-queue:6379";
+        bench set-config -gp socketio_port 9000;
+        echo "Configurator finished successfully";
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - ../apps/logicsky_theme:/home/frappe/frappe-bench/apps/logicsky_theme
+    depends_on:
+      - db
+      - redis-cache
+      - redis-queue
+
+  create-site:
+    image: logicsky-erp:latest
+    restart: "no"
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - ../apps/logicsky_theme:/home/frappe/frappe-bench/apps/logicsky_theme
+    entrypoint: ["bash", "-c"]
+    command:
+      - >
+        wait-for-it -t 180 db:3306;
+        wait-for-it -t 60 redis-cache:6379;
+        wait-for-it -t 60 redis-queue:6379;
+        START=$$(date +%s);
+        while [ ! -f sites/common_site_config.json ]; do
+          echo "Waiting for configurator...";
+          sleep 3;
+          if [ $$(( $$(date +%s) - START )) -gt 120 ]; then
+            echo "Timeout waiting for config";
+            exit 1;
+          fi;
+        done;
+        if [ -d "sites/frontend" ]; then
+          echo "Site frontend already exists, skipping creation";
+          exit 0;
+        fi;
+        echo "Creating site...";
+        bench new-site --mariadb-user-host-login-scope='%' --admin-password=admin --db-root-username=root --db-root-password=admin --install-app erpnext --install-app logicsky_theme --set-default frontend;
+        echo "Site created successfully";
+    depends_on:
+      - configurator
+
+  db:
+    image: mariadb:11.8
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      start_period: 90s
+      timeout: 10s
+      retries: 10
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+      - --skip-innodb-read-only-compressed
+    environment:
+      MYSQL_ROOT_PASSWORD: admin
+    volumes:
+      - db-data:/var/lib/mysql
+
+  frontend:
+    image: logicsky-erp:latest
+    restart: unless-stopped
+    command: ["nginx-entrypoint.sh"]
+    environment:
+      BACKEND: backend:8000
+      SOCKETIO: websocket:9000
+      FRAPPE_SITE_NAME_HEADER: frontend
+      UPSTREAM_REAL_IP_ADDRESS: 127.0.0.1
+      UPSTREAM_REAL_IP_HEADER: X-Forwarded-For
+      UPSTREAM_REAL_IP_RECURSIVE: "off"
+      PROXY_READ_TIMEOUT: 120
+      CLIENT_MAX_BODY_SIZE: 50m
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - ../apps/logicsky_theme:/home/frappe/frappe-bench/apps/logicsky_theme
+    ports:
+      - "8080:8080"
+    depends_on:
+      - backend
+      - websocket
+
+  websocket:
+    image: logicsky-erp:latest
+    restart: unless-stopped
+    command: ["node", "/home/frappe/frappe-bench/apps/frappe/socketio.js"]
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - ../apps/logicsky_theme:/home/frappe/frappe-bench/apps/logicsky_theme
+    depends_on:
+      - create-site
+
+  queue-long:
+    image: logicsky-erp:latest
+    restart: unless-stopped
+    command: ["bench", "worker", "--queue", "long,default,short"]
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - ../apps/logicsky_theme:/home/frappe/frappe-bench/apps/logicsky_theme
+    depends_on:
+      - create-site
+
+  queue-short:
+    image: logicsky-erp:latest
+    restart: unless-stopped
+    command: ["bench", "worker", "--queue", "short,default"]
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - ../apps/logicsky_theme:/home/frappe/frappe-bench/apps/logicsky_theme
+    depends_on:
+      - create-site
+
+  scheduler:
+    image: logicsky-erp:latest
+    restart: unless-stopped
+    command: ["bench", "schedule"]
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - ../apps/logicsky_theme:/home/frappe/frappe-bench/apps/logicsky_theme
+    depends_on:
+      - create-site
+
+  redis-cache:
+    image: redis:6.2-alpine
+    restart: unless-stopped
+
+  redis-queue:
+    image: redis:6.2-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-queue-data:/data
+
+volumes:
+  db-data:
+  redis-queue-data:
+  sites:
