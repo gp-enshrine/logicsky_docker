@@ -6,5 +6,13 @@
   {
     "url": "https://github.com/gp-enshrine/logicsky_theme",
     "branch": "main"
+  },
+  {
+    "url": "https://github.com/gp-enshrine/logicsky_core",
+    "branch": "main"
+  },
+  {
+    "url": "https://github.com/gp-enshrine/logicsky_erpcontrol",
+    "branch": "main"
   }
 ]
