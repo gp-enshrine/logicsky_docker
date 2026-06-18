@@ -1,15 +1,28 @@
 services:
   backend:
-    image: logicsky-erp:latest
+    image: ${LOGICSKY_IMAGE:-gopinathanps/logicsky_erp_eval:latest}
     restart: unless-stopped
+    entrypoint: ["/usr/local/bin/local-entrypoint.sh"]
+    # CMD must be explicit when overriding entrypoint — docker clears image CMD otherwise
+    command:
+      - /home/frappe/frappe-bench/env/bin/gunicorn
+      - --chdir=/home/frappe/frappe-bench/sites
+      - --bind=0.0.0.0:8000
+      - --threads=4
+      - --workers=2
+      - --worker-class=gthread
+      - --worker-tmp-dir=/dev/shm
+      - --timeout=120
+      - --preload
+      - frappe.app:application
     volumes:
       - sites:/home/frappe/frappe-bench/sites
-      - ../apps/logicsky_theme:/home/frappe/frappe-bench/apps/logicsky_theme
+      - ../scripts/local-apps-entrypoint.sh:/usr/local/bin/local-entrypoint.sh
     depends_on:
       - configurator
 
   configurator:
-    image: logicsky-erp:latest
+    image: ${LOGICSKY_IMAGE:-gopinathanps/logicsky_erp_eval:latest}
     restart: "no"
     entrypoint: ["bash", "-c"]
     command:
@@ -21,21 +34,21 @@ services:
         bench set-config -g redis_queue "redis://redis-queue:6379";
         bench set-config -g redis_socketio "redis://redis-queue:6379";
         bench set-config -gp socketio_port 9000;
+        bench set-config -gp dns_multitenant 1;
         echo "Configurator finished successfully";
     volumes:
       - sites:/home/frappe/frappe-bench/sites
-      - ../apps/logicsky_theme:/home/frappe/frappe-bench/apps/logicsky_theme
     depends_on:
       - db
       - redis-cache
       - redis-queue
 
   create-site:
-    image: logicsky-erp:latest
+    image: ${LOGICSKY_IMAGE:-gopinathanps/logicsky_erp_eval:latest}
     restart: "no"
     volumes:
       - sites:/home/frappe/frappe-bench/sites
-      - ../apps/logicsky_theme:/home/frappe/frappe-bench/apps/logicsky_theme
+      - ../scripts/local-apps-entrypoint.sh:/usr/local/bin/local-entrypoint.sh
     entrypoint: ["bash", "-c"]
     command:
       - >
@@ -51,15 +64,27 @@ services:
             exit 1;
           fi;
         done;
-        if [ -d "sites/frontend" ]; then
-          echo "Site frontend already exists, skipping creation";
+        if [ -d "sites/${SITE_NAME:-evalearp.localhost}" ]; then
+          echo "Site ${SITE_NAME:-evalearp.localhost} already exists, skipping creation";
           exit 0;
         fi;
-        echo "Creating site...";
-        bench new-site --mariadb-user-host-login-scope='%' --admin-password=admin --db-root-username=root --db-root-password=admin --install-app erpnext --install-app logicsky_theme --set-default frontend;
+        echo "Creating site ${SITE_NAME:-evalearp.localhost} ...";
+        bench new-site
+          --mariadb-user-host-login-scope='%'
+          --admin-password=${SITE_ADMIN_PASSWORD:-admin}
+          --db-root-username=root
+          --db-root-password=${DB_ROOT_PASSWORD:-admin}
+          --install-app erpnext
+          --install-app logicsky_theme
+          --set-default
+          ${SITE_NAME:-evalearp.localhost};
         echo "Site created successfully";
     depends_on:
       - configurator
+    environment:
+      SITE_NAME: ${SITE_NAME:-evalearp.localhost}
+      SITE_ADMIN_PASSWORD: ${SITE_ADMIN_PASSWORD:-admin}
+      DB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-admin}
 
   db:
     image: mariadb:11.8
@@ -75,19 +100,19 @@ services:
       - --collation-server=utf8mb4_unicode_ci
       - --skip-character-set-client-handshake
       - --skip-innodb-read-only-compressed
+      - --max-connections=1000
     environment:
-      MYSQL_ROOT_PASSWORD: admin
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-admin}
     volumes:
       - db-data:/var/lib/mysql
 
   frontend:
-    image: logicsky-erp:latest
+    image: ${LOGICSKY_IMAGE:-gopinathanps/logicsky_erp_eval:latest}
     restart: unless-stopped
-    command: ["nginx-entrypoint.sh"]
+    entrypoint: ["/usr/local/bin/local-nginx-entrypoint.sh"]
     environment:
       BACKEND: backend:8000
       SOCKETIO: websocket:9000
-      FRAPPE_SITE_NAME_HEADER: frontend
       UPSTREAM_REAL_IP_ADDRESS: 127.0.0.1
       UPSTREAM_REAL_IP_HEADER: X-Forwarded-For
       UPSTREAM_REAL_IP_RECURSIVE: "off"
@@ -95,50 +120,53 @@ services:
       CLIENT_MAX_BODY_SIZE: 50m
     volumes:
       - sites:/home/frappe/frappe-bench/sites
-      - ../apps/logicsky_theme:/home/frappe/frappe-bench/apps/logicsky_theme
+      - ../scripts/local-nginx-entrypoint.sh:/usr/local/bin/local-nginx-entrypoint.sh
+      - ../scripts/frappe.conf.template:/templates/nginx/frappe.conf.template
     ports:
-      - "8080:8080"
+      - "${HTTP_PORT:-8080}:8080"
     depends_on:
       - backend
       - websocket
 
   websocket:
-    image: logicsky-erp:latest
+    image: ${LOGICSKY_IMAGE:-gopinathanps/logicsky_erp_eval:latest}
     restart: unless-stopped
     command: ["node", "/home/frappe/frappe-bench/apps/frappe/socketio.js"]
     volumes:
       - sites:/home/frappe/frappe-bench/sites
-      - ../apps/logicsky_theme:/home/frappe/frappe-bench/apps/logicsky_theme
     depends_on:
       - create-site
 
   queue-long:
-    image: logicsky-erp:latest
+    image: ${LOGICSKY_IMAGE:-gopinathanps/logicsky_erp_eval:latest}
     restart: unless-stopped
+    entrypoint: ["/usr/local/bin/local-entrypoint.sh"]
     command: ["bench", "worker", "--queue", "long,default,short"]
     volumes:
       - sites:/home/frappe/frappe-bench/sites
-      - ../apps/logicsky_theme:/home/frappe/frappe-bench/apps/logicsky_theme
+      - ../scripts/local-apps-entrypoint.sh:/usr/local/bin/local-entrypoint.sh
     depends_on:
       - create-site
 
   queue-short:
-    image: logicsky-erp:latest
+    image: ${LOGICSKY_IMAGE:-gopinathanps/logicsky_erp_eval:latest}
     restart: unless-stopped
+    entrypoint: ["/usr/local/bin/local-entrypoint.sh"]
     command: ["bench", "worker", "--queue", "short,default"]
     volumes:
       - sites:/home/frappe/frappe-bench/sites
-      - ../apps/logicsky_theme:/home/frappe/frappe-bench/apps/logicsky_theme
+      - ../scripts/local-apps-entrypoint.sh:/usr/local/bin/local-entrypoint.sh
     depends_on:
       - create-site
 
   scheduler:
-    image: logicsky-erp:latest
+    image: ${LOGICSKY_IMAGE:-gopinathanps/logicsky_erp_eval:latest}
     restart: unless-stopped
+    entrypoint: ["/usr/local/bin/local-entrypoint.sh"]
     command: ["bench", "schedule"]
     volumes:
       - sites:/home/frappe/frappe-bench/sites
-      - ../apps/logicsky_theme:/home/frappe/frappe-bench/apps/logicsky_theme
+      - ../scripts/local-apps-entrypoint.sh:/usr/local/bin/local-entrypoint.sh
     depends_on:
       - create-site
 
