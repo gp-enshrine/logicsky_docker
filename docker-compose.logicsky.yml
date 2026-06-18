@@ -2,8 +2,6 @@ services:
   backend:
     image: ${LOGICSKY_IMAGE:-gopinathanps/logicsky_erp_eval:latest}
     restart: unless-stopped
-    entrypoint: ["/usr/local/bin/local-entrypoint.sh"]
-    # CMD must be explicit when overriding entrypoint — docker clears image CMD otherwise
     command:
       - /home/frappe/frappe-bench/env/bin/gunicorn
       - --chdir=/home/frappe/frappe-bench/sites
@@ -17,7 +15,6 @@ services:
       - frappe.app:application
     volumes:
       - sites:/home/frappe/frappe-bench/sites
-      - ../scripts/local-apps-entrypoint.sh:/usr/local/bin/local-entrypoint.sh
     depends_on:
       - configurator
 
@@ -48,7 +45,6 @@ services:
     restart: "no"
     volumes:
       - sites:/home/frappe/frappe-bench/sites
-      - ../scripts/local-apps-entrypoint.sh:/usr/local/bin/local-entrypoint.sh
     entrypoint: ["bash", "-c"]
     command:
       - >
@@ -109,7 +105,7 @@ services:
   frontend:
     image: ${LOGICSKY_IMAGE:-gopinathanps/logicsky_erp_eval:latest}
     restart: unless-stopped
-    entrypoint: ["/usr/local/bin/local-nginx-entrypoint.sh"]
+    command: ["nginx-entrypoint.sh"]
     environment:
       BACKEND: backend:8000
       SOCKETIO: websocket:9000
@@ -120,8 +116,6 @@ services:
       CLIENT_MAX_BODY_SIZE: 50m
     volumes:
       - sites:/home/frappe/frappe-bench/sites
-      - ../scripts/local-nginx-entrypoint.sh:/usr/local/bin/local-nginx-entrypoint.sh
-      - ../scripts/frappe.conf.template:/templates/nginx/frappe.conf.template
     ports:
       - "${HTTP_PORT:-8080}:8080"
     depends_on:
@@ -140,33 +134,27 @@ services:
   queue-long:
     image: ${LOGICSKY_IMAGE:-gopinathanps/logicsky_erp_eval:latest}
     restart: unless-stopped
-    entrypoint: ["/usr/local/bin/local-entrypoint.sh"]
     command: ["bench", "worker", "--queue", "long,default,short"]
     volumes:
       - sites:/home/frappe/frappe-bench/sites
-      - ../scripts/local-apps-entrypoint.sh:/usr/local/bin/local-entrypoint.sh
     depends_on:
       - create-site
 
   queue-short:
     image: ${LOGICSKY_IMAGE:-gopinathanps/logicsky_erp_eval:latest}
     restart: unless-stopped
-    entrypoint: ["/usr/local/bin/local-entrypoint.sh"]
     command: ["bench", "worker", "--queue", "short,default"]
     volumes:
       - sites:/home/frappe/frappe-bench/sites
-      - ../scripts/local-apps-entrypoint.sh:/usr/local/bin/local-entrypoint.sh
     depends_on:
       - create-site
 
   scheduler:
     image: ${LOGICSKY_IMAGE:-gopinathanps/logicsky_erp_eval:latest}
     restart: unless-stopped
-    entrypoint: ["/usr/local/bin/local-entrypoint.sh"]
     command: ["bench", "schedule"]
     volumes:
       - sites:/home/frappe/frappe-bench/sites
-      - ../scripts/local-apps-entrypoint.sh:/usr/local/bin/local-entrypoint.sh
     depends_on:
       - create-site
 
